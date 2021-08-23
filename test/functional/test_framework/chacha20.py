@@ -8,7 +8,8 @@ import os
 import sys
 import csv
 
-from . import chacha20_bindings
+import cppimport.import_hook
+from . import chacha20_bindings #for this we need the binary file of the bindings
 
 
 class ChaCha20:

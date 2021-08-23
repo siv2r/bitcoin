@@ -1,3 +1,4 @@
+// cppimport
 #include <pybind11/pybind11.h>
 #include "../../../src/crypto/chacha20.h"
 #include <iostream>
@@ -32,3 +33,10 @@ PYBIND11_MODULE(chacha20_bindings, m) {
             return py::bytes(reinterpret_cast<char const*>(out), s.size());
         });
 }
+/*
+<%
+setup_pybind11(cfg)
+cfg['include_dirs'] = ['...']
+cfg['sources'] = ["../../../src/crypto/chacha20.cpp"]
+%>
+*/
