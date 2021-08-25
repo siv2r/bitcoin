@@ -36,7 +36,7 @@ PYBIND11_MODULE(chacha20_bindings, m) {
 /*
 <%
 setup_pybind11(cfg)
-cfg['include_dirs'] = ['...']
-cfg['sources'] = ["../../../src/crypto/chacha20.cpp"]
+cfg['include_dirs'].append('../../../src/')
+cfg['sources'] = ['../../../src/crypto/chacha20.cpp']
 %>
 */
