@@ -3,22 +3,30 @@
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 """Native Python ChaCha20 implementation with a 64-bit nonce."""
 
-import unittest
+import csv
+import itertools
 import os
 import sys
-import csv
+import unittest
 
 from . import chacha20_bindings
 
 
 class ChaCha20:
-    """Class representing a ChaCha20 cipher instance."""
+    """
+    Class representing the ChaCha20 cipher instance.
+
+    See https://cr.yp.to/chacha/chacha-20080128.pdf and https://tools.ietf.org/html/rfc8439 for the implementation details.
+    """
 
     def __init__(self, key_bytes, nonce_int):
         # split 256-bit key into list of 8 32-bit integers
+        assert len(key_bytes) == 32
         self.key = self.__le_bytes_to_int32_words(key_bytes, 8)
+
         # split 64-bit nonce into list of 2 32-bit integers
-        nonce_bytes = nonce_int.to_bytes(8, 'little')
+        nonce_bytes = nonce_int.to_bytes(8, byteorder='little')
+        assert len(nonce_bytes) == 8
         self.nonce = self.__le_bytes_to_int32_words(nonce_bytes, 2)
 
     def encrypt(self, plaintext, counter_init=0):
@@ -31,15 +39,16 @@ class ChaCha20:
 
     def keystream(self, length, counter_init=0):
         """Returns the keystream for a given length"""
-        blocks = -(length // -64)  # ceiling division
         out = b''
 
-        for i in range(blocks):
-            counter_bytes = (counter_init + i).to_bytes(8, 'little')
+        for i in itertools.count():
+            counter_bytes = (counter_init + i).to_bytes(8, byteorder='little')
             counter = self.__le_bytes_to_int32_words(counter_bytes, 2)
             out += self.__serialize(self.__block(counter))
 
-        return out[:length]
+            if(len(out) >= length):
+                return out[:length]
+
 
     def decrypt(self, ciphertext, counter=1):
         """Decrypt the ciphertext"""
@@ -60,21 +69,15 @@ class ChaCha20:
 
     @staticmethod
     def __serialize(block):
-        return b''.join([(word).to_bytes(4, 'little') for word in block])
+        return b''.join([(word).to_bytes(4, byteorder='little') for word in block])
 
     @staticmethod
     def __le_bytes_to_int32_words(le_bytes, length):
-        return [
-            int.from_bytes(
-                le_bytes[i * 4:i * 4 + 4], byteorder='little'
-            ) for i in range(length)
-        ]
+        return [int.from_bytes(le_bytes[i * 4:i * 4 + 4], byteorder='little') for i in range(length)]
 
     @staticmethod
     def __doubleround(s):
         """Apply a ChaCha20 double round to 16-element state array s.
-
-        See https://cr.yp.to/chacha/chacha-20080128.pdf and https://tools.ietf.org/html/rfc8439
         """
         QUARTER_ROUNDS = [
             # columns
@@ -105,57 +108,64 @@ class ChaCha20:
         bits %= 32  # Make sure the term below does not throw an exception
         return ((v << bits) & 0xffffffff) | (v >> (32 - bits))
 
+
 class TestFrameworkChaCha20(unittest.TestCase):
     def test_cpp(self):
-        def cpp_tester(i, msg_hex, key_hex, nonce_int, counter_int, out_hex):
+        all_vectors = self.csv_vectors()
+
+        for vector in all_vectors:
             c = chacha20_bindings.ChaCha20()
-            msg_bytes = bytes.fromhex(msg_hex)
-            key_bytes = bytes.fromhex(key_hex)
-            expected_bytes = bytes.fromhex(out_hex)
 
-            c.SetKey(key_bytes)
-            c.SetIV(nonce_int)
-            c.Seek(counter_int)
+            c.SetKey(vector['key_bytes'])
+            c.SetIV(vector['nonce_int'])
+            c.Seek(vector['counter_int'])
 
-            if len(msg_hex) == 0:
-                out = c.Keystream(len(expected_bytes))
+            if len(vector['msg_bytes']) == 0:
+                out = c.Keystream(len(vector['expected_bytes']))
             else:
-                out = c.Crypt(msg_bytes)
+                out = c.Crypt(vector['msg_bytes'])
 
-            self.assertEqual(out, expected_bytes, "ChaCha20 cpp test vector %i" % i)
-
-        self.csv_vectors(cpp_tester)
+            error_msg = "ChaCha20 cpp failed for the test vector of index {}".format(
+                vector['idx'])
+            self.assertEqual(out, vector['expected_bytes'], error_msg)
 
     def test_python(self):
-        def python_tester(i, msg_hex, key_hex, nonce_int, counter_int, out_hex):
-            msg_bytes = bytes.fromhex(msg_hex)
-            key_bytes = bytes.fromhex(key_hex)
-            expected_bytes = bytes.fromhex(out_hex)
+        all_vectors = self.csv_vectors()
 
-            c = ChaCha20(key_bytes, nonce_int)
+        for vector in all_vectors:
+            c = ChaCha20(vector['key_bytes'], vector['nonce_int'])
 
-            if len(msg_hex) == 0:
-                out = c.keystream(len(expected_bytes), counter_int)
+            if len(vector['msg_bytes']) == 0:
+                out = c.keystream(
+                    len(vector['expected_bytes']), vector['counter_int'])
             else:
-                out = c.encrypt(msg_bytes, counter_int)
+                out = c.encrypt(vector['msg_bytes'], vector['counter_int'])
 
-            self.assertEqual(out, expected_bytes, "ChaCha20 python test vector %i" % i)
+            error_msg = "ChaCha20 python failed for the test vector of index {}".format(
+                vector['idx'])
+            self.assertEqual(out, vector['expected_bytes'], error_msg)
 
-        self.csv_vectors(python_tester)
+    def csv_vectors(self):
+        all_vectors = list()
 
-    def csv_vectors(self, tester):
         with open(
-            os.path.join(sys.path[0], 'test_framework', 'chacha20_test_vectors.csv'),
+            os.path.join(sys.path[0], 'test_framework',
+                         'chacha20_test_vectors.csv'),
             newline='',
             encoding='utf8'
-        ) as csvfile:
-            reader = csv.reader(csvfile)
-            next(reader)
+        ) as csv_file:
+            csv_reader = csv.DictReader(csv_file)
 
-            for row in reader:
-                (i_str, msg_hex, key_hex, nonce_str, counter_str, out_hex) = row
-                i = int(i_str)
-                counter_int = int(counter_str)
-                nonce_int = int(nonce_str, 16)
+            for row in csv_reader:
+                vector = dict()
 
-                tester(i, msg_hex, key_hex, nonce_int, counter_int, out_hex)
+                vector['idx'] = int(row['index'])
+                vector['msg_bytes'] = bytes.fromhex(row['message'])
+                vector['key_bytes'] = bytes.fromhex(row['key'])
+                vector['nonce_int'] = int(row['nonce'], 16)
+                vector['counter_int'] = int(row['counter'])
+                vector['expected_bytes'] = bytes.fromhex(row['output'])
+
+                all_vectors.append(vector)
+
+        return all_vectors

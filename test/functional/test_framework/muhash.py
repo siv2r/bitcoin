@@ -6,8 +6,8 @@
 import hashlib
 import unittest
 
-from .util import modinv
 from .chacha20 import ChaCha20
+from .util import modinv
 
 
 def chacha20_32_to_384(key32):
